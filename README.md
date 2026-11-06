@@ -31,4 +31,4 @@ Install the U8g2 library through the PlatformIO Library Manager or Arduino IDE L
 
 ## Development Status
 
-PocketStatus is an experimental personal gadget project. Features, module names, hardware configuration, and documentation may change as development continues.
+PocketStatus is an experimental gadget project. Features, module names, hardware configuration, and documentation may change as development continues.
