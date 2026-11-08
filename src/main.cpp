@@ -6,15 +6,19 @@
 #include "Display.h"
 #include "Weather.h"
 #include "CatFace.h"
+#include "Finance.h"
+#include "JadwalSholat.h"
 
 enum class Template
 {
   IDLE_FACE,
   CLOCK,
-  WEATHER
+  WEATHER,
+  FINANCE,
+  JADWAL_SHOLAT
 };
 
-static Template currentTemplate = Template::IDLE_FACE;
+static Template currentTemplate = Template::WEATHER;
 static WeatherData weather;
 
 static bool lastReading = HIGH;
@@ -23,6 +27,18 @@ static bool stableButtonState = HIGH;
 static unsigned long lastDebounceTime = 0;
 static unsigned long lastWeatherUpdate = 0;
 static unsigned long lastDisplayUpdate = 0;
+
+static FinanceData financeData;
+static uint8_t financePage = 0;
+
+unsigned long lastFinanceUpdate = 0;
+const unsigned long FINANCE_INTERVAL = 300000UL; // 5 menit
+
+static SholatData sholatData;
+static unsigned long lastSholatUpdate = 0;
+
+static constexpr unsigned long SHOLAT_INTERVAL =
+    300000UL; // 5 menit
 
 static void handleButton()
 {
@@ -48,6 +64,14 @@ static void handleButton()
           break;
 
         case Template::WEATHER:
+          currentTemplate = Template::FINANCE;
+          break;
+
+        case Template::FINANCE:
+          currentTemplate = Template::JADWAL_SHOLAT;
+          break;
+
+        case Template::JADWAL_SHOLAT:
           currentTemplate = Template::IDLE_FACE;
           break;
 
@@ -97,6 +121,17 @@ static void renderTemplate()
 
   case Template::WEATHER:
     drawWeather(weather);
+    break;
+  case Template::FINANCE:
+    drawFinanceTemplate(
+        getDisplay(),
+        financeData,
+        financePage);
+    break;
+  case Template::JADWAL_SHOLAT:
+    drawSholatTemplate(
+        getDisplay(),
+        sholatData);
     break;
   }
 }
@@ -149,13 +184,13 @@ void loop()
 {
   handleButton();
 
-  // Jangan melakukan HTTP request saat animasi berjalan.
-  // Pembaruan cuaca akan dilanjutkan setelah keluar dari FACE.
+  const unsigned long now = millis();
+
+  // Update cuaca hanya di luar animasi FACE.
   if (currentTemplate != Template::IDLE_FACE &&
       WiFi.status() == WL_CONNECTED &&
-      millis() - lastWeatherUpdate >= WEATHER_INTERVAL)
+      now - lastWeatherUpdate >= WEATHER_INTERVAL)
   {
-
     if (fetchWeather(weather))
     {
       lastWeatherUpdate = millis();
@@ -167,16 +202,58 @@ void loop()
     }
   }
 
+  // Update finance saat template FINANCE aktif.
+  // Fetch pertama dilakukan langsung, fetch berikutnya tiap 5 menit.
+  if (currentTemplate == Template::FINANCE &&
+      WiFi.status() == WL_CONNECTED &&
+      (lastFinanceUpdate == 0 ||
+       now - lastFinanceUpdate >= FINANCE_INTERVAL))
+  {
+    Serial.println("Starting finance fetch...");
+
+    if (fetchFinance(financeData))
+    {
+      lastFinanceUpdate = millis();
+      Serial.println("Finance fetch success");
+    }
+    else
+    {
+      // Coba kembali dalam 60 detik.
+      lastFinanceUpdate =
+          millis() - FINANCE_INTERVAL + 60000UL;
+
+      Serial.println("Finance fetch failed");
+    }
+  }
+
   if (currentTemplate == Template::IDLE_FACE)
   {
-    // Animasi diperiksa setiap putaran loop.
+    // Jangan melakukan HTTP request saat animasi berjalan.
     updateCatFace();
   }
-  else if (millis() - lastDisplayUpdate >= 500)
+  else if (millis() - lastDisplayUpdate >= 1000)
   {
     lastDisplayUpdate = millis();
     renderTemplate();
   }
+
+
+  if (currentTemplate == Template::JADWAL_SHOLAT &&
+    WiFi.status() == WL_CONNECTED &&
+    (lastSholatUpdate == 0 ||
+     millis() - lastSholatUpdate >= SHOLAT_INTERVAL))
+{
+    if (fetchSholat(sholatData))
+    {
+        lastSholatUpdate = millis();
+    }
+    else
+    {
+        // Coba lagi dalam 60 detik.
+        lastSholatUpdate =
+            millis() - SHOLAT_INTERVAL + 60000UL;
+    }
+}
 
   delay(1);
 }
