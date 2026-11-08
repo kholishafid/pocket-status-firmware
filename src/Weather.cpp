@@ -1,3 +1,4 @@
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -7,6 +8,11 @@
 #include "Config.h"
 #include "Weather.h"
 
+namespace {
+    constexpr char WEATHER_API[] =
+        "https://pocket-status-api.iwanfaiber1.workers.dev/api/cuaca";
+}
+
 bool fetchWeather(WeatherData& data) {
     if (WiFi.status() != WL_CONNECTED) {
         Serial.println("Weather: Wi-Fi disconnected");
@@ -14,43 +20,37 @@ bool fetchWeather(WeatherData& data) {
     }
 
     WiFiClientSecure client;
-    client.setInsecure();  // Prototype only
+
+    // Prototype only. Use certificate verification in production.
+    client.setInsecure();
 
     HTTPClient http;
     http.setConnectTimeout(8000);
     http.setTimeout(8000);
 
-    String url =
-        "https://api.open-meteo.com/v1/forecast?latitude=" +
-        String(LATITUDE, 4) +
-        "&longitude=" + String(LONGITUDE, 4) +
-        "&current=temperature_2m,weather_code"
-        "&daily=temperature_2m_max,temperature_2m_min"
-        "&forecast_days=1&timezone=Asia%2FJakarta";
+    Serial.println("Fetching PocketStatus weather...");
 
-    Serial.println("Fetching weather...");
-
-    if (!http.begin(client, url)) {
+    if (!http.begin(client, WEATHER_API)) {
         Serial.println("Weather: HTTP begin failed");
         return false;
     }
 
     http.addHeader("Accept", "application/json");
 
-    int status = http.GET();
+    const int status = http.GET();
 
     if (status != HTTP_CODE_OK) {
-        // Negative codes are connection/TLS/timeout errors (see HTTPClient.h)
-        Serial.printf("Weather HTTP error: %d (%s)\n",
-                      status, HTTPClient::errorToString(status).c_str());
+        Serial.printf(
+            "Weather HTTP error: %d (%s)\n",
+            status,
+            HTTPClient::errorToString(status).c_str()
+        );
+
         http.end();
         return false;
     }
 
-    // IMPORTANT: Open-Meteo replies with "Transfer-Encoding: chunked".
-    // http.getStream() returns the RAW stream, so the chunk-size lines get
-    // mixed into the JSON and deserializeJson() fails (InvalidInput).
-    // getString() decodes chunked responses correctly.
+    // getString() handles the HTTP response body.
     String payload = http.getString();
     http.end();
 
@@ -60,44 +60,103 @@ bool fetchWeather(WeatherData& data) {
     }
 
     JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, payload);
+    const DeserializationError error =
+        deserializeJson(doc, payload);
 
     if (error) {
-        Serial.printf("Weather JSON error: %s\n", error.c_str());
+        Serial.printf(
+            "Weather JSON error: %s\n",
+            error.c_str()
+        );
         Serial.println(payload);
         return false;
     }
 
-    JsonObject current = doc["current"];
-    JsonObject daily = doc["daily"];
-
-    if (current.isNull() || daily.isNull()) {
-        Serial.println("Weather: unexpected response:");
+    if (doc["status"] != "success" ||
+        doc["data"].isNull()) {
+        Serial.println("Weather: unexpected API response");
         Serial.println(payload);
         return false;
     }
 
-    data.temperature    = current["temperature_2m"] | 0.0f;
-    data.weatherCode    = current["weather_code"] | 0;
-    data.maxTemperature = daily["temperature_2m_max"][0] | 0.0f;
-    data.minTemperature = daily["temperature_2m_min"][0] | 0.0f;
+    JsonObject weather = doc["data"];
+
+    // Map fields from the PocketStatus API.
+    data.temperature =
+        weather["suhu"] | 0.0f;
+
+    data.weatherCode =
+        weather["kode_cuaca"] | -1;
+
+    data.humidity =
+        weather["kelembapan"] | 0;
+
+    data.windSpeed =
+        weather["kecepatan_angin"] | 0.0f;
+
+    data.airQuality =
+        weather["aqi_iqair"] | 0;
+
+    strncpy(
+        data.bmkgLocation,
+        weather["lokasi_bmkg"] | "",
+        sizeof(data.bmkgLocation) - 1);
+    data.bmkgLocation[sizeof(data.bmkgLocation) - 1] = '\0';
+
+    strncpy(
+        data.airQualityLocation,
+        weather["lokasi_iqair"] | "",
+        sizeof(data.airQualityLocation) - 1);
+    data.airQualityLocation[sizeof(data.airQualityLocation) - 1] = '\0';
+
+    strncpy(
+        data.description,
+        weather["deskripsi_cuaca"] | weatherDescription(data.weatherCode),
+        sizeof(data.description) - 1);
+    data.description[sizeof(data.description) - 1] = '\0';
+
+    strncpy(
+        data.windDirection,
+        weather["arah_angin"] | "-",
+        sizeof(data.windDirection) - 1);
+    data.windDirection[sizeof(data.windDirection) - 1] = '\0';
+
+    // This API does not provide daily min/max temperatures.
+    // Keep the existing fields populated for compatibility.
+    data.maxTemperature = data.temperature;
+    data.minTemperature = data.temperature;
 
     data.valid = true;
 
-    Serial.printf("Weather updated: %.1f C, code %d\n",
-                  data.temperature, data.weatherCode);
+    Serial.printf(
+        "Weather updated: %.1f C, %d%% humidity, AQI %d, code %d, %s\n",
+        data.temperature,
+        data.humidity,
+        data.airQuality,
+        data.weatherCode,
+        data.description
+    );
+
     return true;
 }
 
 const char* weatherDescription(int code) {
-    if (code == 0) return "Cerah";
-    if (code <= 3) return "Berawan";
-    if (code <= 48) return "Berkabut";
-    if (code <= 57) return "Gerimis";
-    if (code <= 67) return "Hujan";
-    if (code <= 77) return "Salju";
-    if (code <= 82) return "Hujan";
-    if (code <= 86) return "Salju";
-    if (code <= 99) return "Badai";
-    return "Tidak diketahui";
+    // Weather codes from the PocketStatus API.
+    // Code 2 = Cerah Berawan, based on the provided API response.
+    switch (code) {
+        case 0:
+            return "Cerah";
+
+        case 1:
+            return "Cerah";
+
+        case 2:
+            return "Cerah Berawan";
+
+        case 3:
+            return "Berawan";
+
+        default:
+            return "Tidak diketahui";
+    }
 }
