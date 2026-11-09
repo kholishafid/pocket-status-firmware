@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <time.h>
 
+#include "BleDebug.h"
 #include "Config.h"
 #include "Display.h"
 #include "Weather.h"
@@ -36,6 +37,7 @@ const unsigned long FINANCE_INTERVAL = 300000UL; // 5 menit
 
 static SholatData sholatData;
 static unsigned long lastSholatUpdate = 0;
+static WifiScanner wifiScanner;
 
 static constexpr unsigned long SHOLAT_INTERVAL =
     300000UL; // 5 menit
@@ -145,6 +147,8 @@ void setup()
   initDisplay();
   drawMessage("Connecting WiFi...");
 
+  initBleDebug();
+
   // initEmotionFace(getDisplay());
   initCatFace(getDisplay());
 
@@ -236,6 +240,8 @@ void loop()
     lastDisplayUpdate = millis();
     renderTemplate();
   }
+
+  updateBleDebug(wifiScanner);
 
 
   if (currentTemplate == Template::JADWAL_SHOLAT &&
