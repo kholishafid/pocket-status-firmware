@@ -15,10 +15,25 @@ static const char* FINANCE_URL =
 
 bool fetchFinance(FinanceData& data) {
     if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("Finance: Wi-Fi disconnected");
+        Serial.printf(
+            "Finance: Wi-Fi unavailable (status=%d, RSSI=%d dBm)\n",
+            WiFi.status(),
+            WiFi.RSSI()
+        );
         return false;
     }
 
+    const String localIp = WiFi.localIP().toString();
+    const String gatewayIp = WiFi.gatewayIP().toString();
+    const String dnsIp = WiFi.dnsIP().toString();
+
+    Serial.printf(
+        "Finance: Wi-Fi connected, RSSI=%d dBm, IP=%s, gateway=%s, DNS=%s\n",
+        WiFi.RSSI(),
+        localIp.c_str(),
+        gatewayIp.c_str(),
+        dnsIp.c_str()
+    );
     WiFiClientSecure client;
     client.setInsecure(); // Prototype only
 
@@ -26,7 +41,7 @@ bool fetchFinance(FinanceData& data) {
     http.setConnectTimeout(8000);
     http.setTimeout(8000);
 
-    Serial.println("Fetching finance data...");
+    Serial.printf("Finance: connecting to %s\n", FINANCE_URL);
 
     if (!http.begin(client, FINANCE_URL)) {
         Serial.println("Finance: HTTP begin failed");
@@ -43,6 +58,22 @@ bool fetchFinance(FinanceData& data) {
             status,
             HTTPClient::errorToString(status).c_str()
         );
+
+        if (status == HTTPC_ERROR_CONNECTION_REFUSED) {
+            Serial.println(
+                "Finance: TCP/TLS connection refused. "
+                "Check DNS, internet access, API host, and port 443."
+            );
+        } else if (status < 0) {
+            Serial.println(
+                "Finance: request failed before receiving an HTTP response."
+            );
+        } else {
+            Serial.printf(
+                "Finance: server returned HTTP status %d.\n",
+                status
+            );
+        }
 
         http.end();
         return false;

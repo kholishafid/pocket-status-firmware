@@ -9,6 +9,7 @@ bool scanFinished = false;
 bool scanFailed = false;
 int16_t scanResults = 0;
 int16_t nextResult = 0;
+bool reconnectAfterScan = false;
 
 const char *securityName(wifi_auth_mode_t mode)
 {
@@ -47,6 +48,12 @@ bool WifiScanner::startScan()
     return false;
   }
 
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    reconnectAfterScan = true;
+    WiFi.disconnect(false, false);
+  }
+
   const int16_t currentScan = WiFi.scanComplete();
   if (currentScan == WIFI_SCAN_RUNNING)
   {
@@ -63,6 +70,11 @@ bool WifiScanner::startScan()
 
   if (WiFi.scanNetworks(true, true) == WIFI_SCAN_FAILED)
   {
+    if (reconnectAfterScan)
+    {
+      WiFi.reconnect();
+      reconnectAfterScan = false;
+    }
     return false;
   }
 
@@ -84,6 +96,12 @@ void WifiScanner::update()
   }
 
   scanRunning = false;
+  if (reconnectAfterScan)
+  {
+    WiFi.reconnect();
+    reconnectAfterScan = false;
+  }
+
   if (result < 0)
   {
     scanResults = 0;

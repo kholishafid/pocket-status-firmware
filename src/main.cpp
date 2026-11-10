@@ -19,7 +19,7 @@ enum class Template
   JADWAL_SHOLAT
 };
 
-static Template currentTemplate = Template::WEATHER;
+static Template currentTemplate = Template::IDLE_FACE;
 static WeatherData weather;
 
 static bool lastReading = HIGH;
@@ -31,16 +31,11 @@ static unsigned long lastDisplayUpdate = 0;
 
 static FinanceData financeData;
 static uint8_t financePage = 0;
-
-unsigned long lastFinanceUpdate = 0;
-const unsigned long FINANCE_INTERVAL = 300000UL; // 5 menit
+static unsigned long lastFinanceUpdate = 0;
 
 static SholatData sholatData;
 static unsigned long lastSholatUpdate = 0;
 static WifiScanner wifiScanner;
-
-static constexpr unsigned long SHOLAT_INTERVAL =
-    300000UL; // 5 menit
 
 static void handleButton()
 {
@@ -147,11 +142,12 @@ void setup()
   initDisplay();
   drawMessage("Connecting WiFi...");
 
-  initBleDebug();
-
   // initEmotionFace(getDisplay());
   initCatFace(getDisplay());
 
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   unsigned long start = millis();
@@ -171,15 +167,13 @@ void setup()
         "pool.ntp.org",
         "time.google.com");
 
-    if (fetchWeather(weather))
-    {
-      lastWeatherUpdate = millis();
-    }
   }
   else
   {
     Serial.println("Wi-Fi connection failed");
   }
+
+  initBleDebug();
 
   renderTemplate();
 }
@@ -190,10 +184,11 @@ void loop()
 
   const unsigned long now = millis();
 
-  // Update cuaca hanya di luar animasi FACE.
-  if (currentTemplate != Template::IDLE_FACE &&
+  // Fetch data hanya saat template sumber datanya sedang aktif.
+  if (currentTemplate == Template::WEATHER &&
       WiFi.status() == WL_CONNECTED &&
-      now - lastWeatherUpdate >= WEATHER_INTERVAL)
+      (lastWeatherUpdate == 0 ||
+       now - lastWeatherUpdate >= DATA_FETCH_INTERVAL))
   {
     if (fetchWeather(weather))
     {
@@ -201,17 +196,15 @@ void loop()
     }
     else
     {
-      lastWeatherUpdate =
-          millis() - WEATHER_INTERVAL + 60000UL;
+      lastWeatherUpdate = millis();
     }
   }
 
   // Update finance saat template FINANCE aktif.
-  // Fetch pertama dilakukan langsung, fetch berikutnya tiap 5 menit.
   if (currentTemplate == Template::FINANCE &&
       WiFi.status() == WL_CONNECTED &&
       (lastFinanceUpdate == 0 ||
-       now - lastFinanceUpdate >= FINANCE_INTERVAL))
+       now - lastFinanceUpdate >= DATA_FETCH_INTERVAL))
   {
     Serial.println("Starting finance fetch...");
 
@@ -222,9 +215,7 @@ void loop()
     }
     else
     {
-      // Coba kembali dalam 60 detik.
-      lastFinanceUpdate =
-          millis() - FINANCE_INTERVAL + 60000UL;
+      lastFinanceUpdate = millis();
 
       Serial.println("Finance fetch failed");
     }
@@ -247,7 +238,7 @@ void loop()
   if (currentTemplate == Template::JADWAL_SHOLAT &&
     WiFi.status() == WL_CONNECTED &&
     (lastSholatUpdate == 0 ||
-     millis() - lastSholatUpdate >= SHOLAT_INTERVAL))
+     millis() - lastSholatUpdate >= DATA_FETCH_INTERVAL))
 {
     if (fetchSholat(sholatData))
     {
@@ -255,9 +246,7 @@ void loop()
     }
     else
     {
-        // Coba lagi dalam 60 detik.
-        lastSholatUpdate =
-            millis() - SHOLAT_INTERVAL + 60000UL;
+      lastSholatUpdate = millis();
     }
 }
 

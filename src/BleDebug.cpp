@@ -1,11 +1,11 @@
 #include "BleDebug.h"
 
 #include <ArduinoJson.h>
-#include <BLE2902.h>
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLEUtils.h>
+#include <NimBLEDevice.h>
+#include <NimBLEServer.h>
+#include <NimBLEUtils.h>
 #include <WiFi.h>
+#include <esp_bt.h>
 
 namespace
 {
@@ -14,7 +14,6 @@ constexpr char BLE_SERVICE_UUID[] = "7b5e0001-4f4f-4f4f-8b5a-000000000001";
 constexpr char BLE_COMMAND_UUID[] = "7b5e0002-4f4f-4f4f-8b5a-000000000001";
 constexpr char BLE_DATA_UUID[] = "7b5e0003-4f4f-4f4f-8b5a-000000000001";
 constexpr char BLE_STATUS_UUID[] = "7b5e0004-4f4f-4f4f-8b5a-000000000001";
-
 constexpr unsigned long BLE_COMMAND_POLL_INTERVAL = 20UL;
 
 enum class PendingCommand
@@ -25,30 +24,18 @@ enum class PendingCommand
   UNKNOWN
 };
 
-BLECharacteristic *commandCharacteristic = nullptr;
-BLECharacteristic *dataCharacteristic = nullptr;
-BLECharacteristic *statusCharacteristic = nullptr;
+NimBLECharacteristic *commandCharacteristic = nullptr;
+NimBLECharacteristic *dataCharacteristic = nullptr;
+NimBLECharacteristic *statusCharacteristic = nullptr;
 volatile PendingCommand pendingCommand = PendingCommand::NONE;
 unsigned long lastCommandPoll = 0;
 uint32_t scanId = 0;
 bool scanSessionActive = false;
 int16_t sentNetworkCount = 0;
 
-BLE2902 *notificationsDescriptor(BLECharacteristic *characteristic)
+bool notificationsEnabled(NimBLECharacteristic *characteristic)
 {
-  if (characteristic == nullptr)
-  {
-    return nullptr;
-  }
-
-  return static_cast<BLE2902 *>(
-      characteristic->getDescriptorByUUID((uint16_t)0x2902));
-}
-
-bool notificationsEnabled(BLECharacteristic *characteristic)
-{
-  BLE2902 *descriptor = notificationsDescriptor(characteristic);
-  return descriptor != nullptr && descriptor->getNotifications();
+  return characteristic != nullptr;
 }
 
 bool sendRawData(const String &payload)
@@ -58,7 +45,7 @@ bool sendRawData(const String &payload)
     return false;
   }
 
-  const uint16_t mtu = BLEDevice::getMTU();
+  const uint16_t mtu = NimBLEDevice::getMTU();
   const size_t maxPayload = mtu > 3 ? mtu - 3 : 0;
   if (payload.length() > maxPayload)
   {
@@ -93,7 +80,7 @@ bool sendEvent(JsonDocument &document)
   String payload;
   serializeJson(document, payload);
 
-  const uint16_t mtu = BLEDevice::getMTU();
+  const uint16_t mtu = NimBLEDevice::getMTU();
   const size_t maxPayload = mtu > 3 ? mtu - 3 : 0;
   if (payload.length() > maxPayload)
   {
@@ -120,7 +107,7 @@ void setStatus(const char *state)
   serializeJson(document, payload);
   statusCharacteristic->setValue(payload.c_str());
 
-  const uint16_t mtu = BLEDevice::getMTU();
+  const uint16_t mtu = NimBLEDevice::getMTU();
   if (payload.length() <= (mtu > 3 ? mtu - 3 : 0) &&
       notificationsEnabled(statusCharacteristic))
   {
@@ -128,10 +115,12 @@ void setStatus(const char *state)
   }
 }
 
-class CommandCallbacks : public BLECharacteristicCallbacks
+class CommandCallbacks : public NimBLECharacteristicCallbacks
 {
 public:
-  void onWrite(BLECharacteristic *characteristic) override
+  void onWrite(
+      NimBLECharacteristic *characteristic,
+      NimBLEConnInfo &) override
   {
     String command = characteristic->getValue().c_str();
     command.trim();
@@ -248,35 +237,46 @@ void processCommand(WifiScanner &wifiScanner)
 
 void initBleDebug()
 {
-  BLEDevice::init(BLE_DEVICE_NAME);
+  esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+  NimBLEDevice::init(BLE_DEVICE_NAME);
 
-  BLEServer *server = BLEDevice::createServer();
-  BLEService *service = server->createService(BLE_SERVICE_UUID);
+  NimBLEServer *server = NimBLEDevice::createServer();
+  NimBLEService *service = server->createService(BLE_SERVICE_UUID);
 
   commandCharacteristic = service->createCharacteristic(
       BLE_COMMAND_UUID,
-      BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
+      NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
   commandCharacteristic->setCallbacks(new CommandCallbacks());
+    commandCharacteristic
+      ->createDescriptor("2901", NIMBLE_PROPERTY::READ, 32)
+      ->setValue("Command");
 
   dataCharacteristic = service->createCharacteristic(
       BLE_DATA_UUID,
-      BLECharacteristic::PROPERTY_NOTIFY);
-  dataCharacteristic->addDescriptor(new BLE2902());
+      NIMBLE_PROPERTY::NOTIFY);
+    dataCharacteristic
+      ->createDescriptor("2901", NIMBLE_PROPERTY::READ, 32)
+      ->setValue("WiFi scan data");
 
   statusCharacteristic = service->createCharacteristic(
       BLE_STATUS_UUID,
-      BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
-  statusCharacteristic->addDescriptor(new BLE2902());
+      NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+    statusCharacteristic
+      ->createDescriptor("2901", NIMBLE_PROPERTY::READ, 32)
+      ->setValue("Status");
 
-  service->start();
+  server->start();
 
-  BLEAdvertising *advertising = BLEDevice::getAdvertising();
+  NimBLEAdvertising *advertising = NimBLEDevice::getAdvertising();
+  advertising->setName(BLE_DEVICE_NAME);
   advertising->addServiceUUID(service->getUUID());
-  advertising->setScanResponse(true);
-  BLEDevice::startAdvertising();
+  advertising->enableScanResponse(true);
+  const bool advertisingStarted = advertising->start();
 
   setStatus("idle");
-  Serial.println("BLE debug server started");
+  Serial.printf(
+      "BLE debug server %s\n",
+      advertisingStarted ? "started" : "failed to start");
 }
 
 void updateBleDebug(WifiScanner &wifiScanner)
