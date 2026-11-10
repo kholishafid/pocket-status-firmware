@@ -147,7 +147,34 @@ void TemplateController::render()
   }
 }
 
+// Pastikan fungsi bawaan ini MASIH ADA:
 Template TemplateController::current() const
 {
   return currentTemplate_;
+}
+
+// Dan fungsi baru lu ada di bawahnya:
+void TemplateController::setTemplateByName(const String& templateName)
+{
+  if (templateName == "weather") {
+    currentTemplate_ = Template::WEATHER;
+  } 
+  else if (templateName == "finance") {
+    currentTemplate_ = Template::FINANCE;
+  } 
+  else if (templateName == "jadwal_sholat") {
+    currentTemplate_ = Template::JADWAL_SHOLAT;
+  } 
+  else if (templateName == "catface" || templateName == "idle") {
+    currentTemplate_ = Template::IDLE_FACE;
+  } 
+  else if (templateName == "clock") {
+    currentTemplate_ = Template::CLOCK;
+  }
+
+  lastWeatherUpdate_ = 0; 
+  lastFinanceUpdate_ = 0;
+  lastSholatUpdate_ = 0;
+  
+  Serial.println("BLE Command: Layar diganti ke " + templateName);
 }

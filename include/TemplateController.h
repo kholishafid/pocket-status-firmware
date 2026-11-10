@@ -28,6 +28,7 @@ public:
   void updateData();
   void render();
   Template current() const;
+  void setTemplateByName(const String& templateName);
 
 private:
   WeatherData &weather_;
