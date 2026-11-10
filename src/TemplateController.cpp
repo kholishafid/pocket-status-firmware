@@ -131,7 +131,7 @@ void TemplateController::render()
     }
     else
     {
-      drawMessage("Waiting for time...");
+      drawMessage("No Wi-Fi / time unavailable");
     }
     break;
   }

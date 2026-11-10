@@ -36,7 +36,7 @@ void setup()
 
   initCatFace(getDisplay());
 
-  connectWifi();
+  beginWifi();
 
   initBleDebug();
 
@@ -46,6 +46,7 @@ void setup()
 void loop()
 {
   templateController.handleButton();
+  updateWifi();
   templateController.updateData();
 
   if (templateController.current() == Template::IDLE_FACE)

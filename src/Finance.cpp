@@ -211,8 +211,8 @@ void drawFinanceTemplate(
 
     if (!data.valid) {
         oled.setFont(u8g2_font_6x10_tf);
-        oled.drawStr(10, 34, "Waiting finance data...");
-        oled.drawStr(0, 62, "Check Wi-Fi / API");
+        oled.drawStr(10, 34, "No Wi-Fi / Internet");
+        oled.drawStr(0, 62, "Configure via BLE");
         oled.sendBuffer();
         return;
     }

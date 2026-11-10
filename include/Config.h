@@ -1,8 +1,5 @@
 #pragma once
 
-#define WIFI_SSID     "Android"
-#define WIFI_PASSWORD "qwerty12z"
-
 constexpr int BUTTON_PIN = 0;  // Tombol BOOT
 constexpr int OLED_SDA = 21;
 constexpr int OLED_SCL = 22;

@@ -1,5 +1,33 @@
 # PocketStatus Firmware
 
+## Wi-Fi configuration over BLE
+
+On a fresh device, no Wi-Fi credentials are stored. Use the existing BLE
+`SCAN_WIFI` command after subscribing to Data notifications to discover nearby
+networks. Each network is returned as a `wifi_result` event.
+
+Send the following JSON to the Command characteristic to save credentials and
+start a connection attempt:
+
+```json
+{"command":"SET_WIFI","ssid":"My WiFi","password":"secret"}
+```
+
+The password is stored in ESP32 NVS and is never included in BLE responses.
+The firmware sends `wifi_config_saved` immediately, followed by `wifi_status`
+events when the connection state changes.
+
+Other configuration commands:
+
+- `GET_WIFI_CONFIG` returns the configured SSID and connection state.
+- `CLEAR_WIFI` removes the saved SSID and password.
+- `GET_STATUS` continues to return the device and Wi-Fi status.
+
+Subscribe to the Data and Status characteristics before sending commands.
+The Wi-Fi-dependent templates show an offline/configuration message when no
+connection or internet data is available.
+# PocketStatus Firmware
+
 PocketStatus is a compact ESP32-based desktop gadget that displays real-time time and weather updates on a small OLED display.
 
 ## Software Requirements

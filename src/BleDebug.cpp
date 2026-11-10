@@ -7,6 +7,8 @@
 #include <WiFi.h>
 #include <esp_bt.h>
 
+#include "WifiConnection.h"
+
 namespace
 {
 constexpr char BLE_DEVICE_NAME[] = "PocketStatus Hafid";
@@ -25,6 +27,9 @@ enum class PendingCommand
   NONE,
   SCAN_WIFI,
   GET_STATUS,
+  CONFIGURE_WIFI,
+  GET_WIFI_CONFIG,
+  CLEAR_WIFI,
   UNKNOWN
 };
 
@@ -32,6 +37,7 @@ struct PendingRequest
 {
   PendingCommand command = PendingCommand::NONE;
   uint16_t connHandle = BLE_HS_CONN_HANDLE_NONE;
+  char payload[256] = {};
 };
 
 struct ClientState
@@ -54,6 +60,12 @@ uint32_t scanId = 0;
 bool scanSessionActive = false;
 uint16_t scanOwnerHandle = BLE_HS_CONN_HANDLE_NONE;
 int16_t sentNetworkCount = 0;
+bool advertisingRestartPending = false;
+unsigned long lastAdvertisingRestartAttempt = 0;
+bool wifiStateInitialized = false;
+bool lastWifiConnected = false;
+bool lastWifiConnecting = false;
+bool lastWifiConfigured = false;
 
 int findClientLocked(uint16_t connHandle)
 {
@@ -119,6 +131,7 @@ void unregisterClient(uint16_t connHandle)
     scanSessionActive = false;
     scanOwnerHandle = BLE_HS_CONN_HANDLE_NONE;
   }
+  advertisingRestartPending = true;
   portEXIT_CRITICAL(&bleStateMux);
 }
 
@@ -192,6 +205,9 @@ void setStatus(const char *state)
   document["event"] = "status";
   document["state"] = state;
   document["wifi_connected"] = WiFi.status() == WL_CONNECTED;
+  document["wifi_configured"] = hasWifiConfiguration();
+  document["wifi_connecting"] = isWifiConnecting();
+  document["wifi_ssid"] = getConfiguredWifiSsid();
 
   String payload;
   serializeJson(document, payload);
@@ -252,7 +268,6 @@ public:
   {
     Serial.printf("[BLE] Client disconnected handle=%u\n", connInfo.getConnHandle());
     unregisterClient(connInfo.getConnHandle());
-    NimBLEDevice::startAdvertising();
   }
 
   void onMTUChange(uint16_t mtu, NimBLEConnInfo &connInfo) override
@@ -280,10 +295,25 @@ public:
     {
       pending = PendingCommand::GET_STATUS;
     }
+    else if (command == "GET_WIFI_CONFIG")
+    {
+      pending = PendingCommand::GET_WIFI_CONFIG;
+    }
+    else if (command == "CLEAR_WIFI")
+    {
+      pending = PendingCommand::CLEAR_WIFI;
+    }
+    else if (command.startsWith("{"))
+    {
+      pending = PendingCommand::CONFIGURE_WIFI;
+    }
 
     portENTER_CRITICAL(&bleStateMux);
     pendingRequest.command = pending;
     pendingRequest.connHandle = connInfo.getConnHandle();
+    command.toCharArray(
+        pendingRequest.payload,
+        sizeof(pendingRequest.payload));
     portEXIT_CRITICAL(&bleStateMux);
 
     Serial.printf(
@@ -304,22 +334,27 @@ public:
   }
 };
 
-PendingRequest takePendingRequest()
-{
-  PendingRequest request;
-  portENTER_CRITICAL(&bleStateMux);
-  request = pendingRequest;
-  pendingRequest = PendingRequest{};
-  portEXIT_CRITICAL(&bleStateMux);
-  return request;
-}
-
 bool isScanActive()
 {
   portENTER_CRITICAL(&bleStateMux);
   const bool active = scanSessionActive;
   portEXIT_CRITICAL(&bleStateMux);
   return active;
+}
+
+bool takeAdvertisingRestartRequest()
+{
+  portENTER_CRITICAL(&bleStateMux);
+  const bool pending = advertisingRestartPending;
+  portEXIT_CRITICAL(&bleStateMux);
+  return pending;
+}
+
+void clearAdvertisingRestartRequest()
+{
+  portENTER_CRITICAL(&bleStateMux);
+  advertisingRestartPending = false;
+  portEXIT_CRITICAL(&bleStateMux);
 }
 
 uint16_t getScanOwner()
@@ -494,6 +529,73 @@ bool sendScanComplete(int16_t total, uint16_t connHandle)
   return sendEvent(document, connHandle);
 }
 
+bool sendWifiConfigEvent(
+    const char *eventName,
+    uint16_t connHandle)
+{
+  JsonDocument document;
+  document["event"] = eventName;
+  document["configured"] = hasWifiConfiguration();
+  document["connecting"] = isWifiConnecting();
+  document["connected"] = WiFi.status() == WL_CONNECTED;
+  document["ssid"] = getConfiguredWifiSsid();
+  return sendEvent(document, connHandle);
+}
+
+void publishWifiStateIfChanged()
+{
+  const bool connected = WiFi.status() == WL_CONNECTED;
+  const bool connecting = isWifiConnecting();
+  const bool configured = hasWifiConfiguration();
+
+  if (wifiStateInitialized &&
+      connected == lastWifiConnected &&
+      connecting == lastWifiConnecting &&
+      configured == lastWifiConfigured)
+  {
+    return;
+  }
+
+  wifiStateInitialized = true;
+  lastWifiConnected = connected;
+  lastWifiConnecting = connecting;
+  lastWifiConfigured = configured;
+
+  if (connected)
+  {
+    setStatus("wifi_connected");
+  }
+  else if (connecting)
+  {
+    setStatus("wifi_connecting");
+  }
+  else if (configured)
+  {
+    setStatus("wifi_disconnected");
+  }
+  else
+  {
+    setStatus("wifi_not_configured");
+  }
+
+  ClientState subscribedClients[MAX_BLE_CLIENTS];
+  size_t subscribedCount = 0;
+  portENTER_CRITICAL(&bleStateMux);
+  for (size_t index = 0; index < MAX_BLE_CLIENTS; index++)
+  {
+    if (clients[index].connected && clients[index].dataSubscribed)
+    {
+      subscribedClients[subscribedCount++] = clients[index];
+    }
+  }
+  portEXIT_CRITICAL(&bleStateMux);
+
+  for (size_t index = 0; index < subscribedCount; index++)
+  {
+    sendWifiConfigEvent("wifi_status", subscribedClients[index].connHandle);
+  }
+}
+
 bool isScanActive();
 uint16_t getScanOwner();
 void setScanState(bool active, uint16_t ownerHandle);
@@ -525,8 +627,72 @@ void processCommand(WifiScanner &wifiScanner)
     document["event"] = "status";
     document["state"] = scanning ? "scanning" : "idle";
     document["wifi_connected"] = WiFi.status() == WL_CONNECTED;
+    document["wifi_configured"] = hasWifiConfiguration();
+    document["wifi_connecting"] = isWifiConnecting();
+    document["wifi_ssid"] = getConfiguredWifiSsid();
     document["scan_id"] = scanId;
     sendEvent(document, request.connHandle);
+    return;
+  }
+
+  if (request.command == PendingCommand::GET_WIFI_CONFIG)
+  {
+    if (!dataNotificationsEnabled(request.connHandle))
+    {
+      setStatus("waiting_for_notifications");
+      return;
+    }
+
+    sendWifiConfigEvent("wifi_config", request.connHandle);
+    return;
+  }
+
+  if (request.command == PendingCommand::CLEAR_WIFI)
+  {
+    clearWifiConfiguration();
+    setStatus("wifi_not_configured");
+    if (dataNotificationsEnabled(request.connHandle))
+    {
+      sendWifiConfigEvent("wifi_config_cleared", request.connHandle);
+    }
+    return;
+  }
+
+  if (request.command == PendingCommand::CONFIGURE_WIFI)
+  {
+    if (!dataNotificationsEnabled(request.connHandle))
+    {
+      setStatus("waiting_for_notifications");
+      return;
+    }
+
+    JsonDocument configuration;
+    const DeserializationError parseError =
+        deserializeJson(configuration, request.payload);
+    const char *commandName = configuration["command"] | "";
+    const String ssid = configuration["ssid"] | "";
+    const String password = configuration["password"] | "";
+
+    if (parseError || strcmp(commandName, "SET_WIFI") != 0 || ssid.isEmpty())
+    {
+      sendError(
+          "invalid_wifi_config",
+          "Use {\"command\":\"SET_WIFI\",\"ssid\":\"...\",\"password\":\"...\"}",
+          request.connHandle);
+      return;
+    }
+
+    if (!configureWifi(ssid, password))
+    {
+      sendError(
+          "wifi_config_save_failed",
+          "Wi-Fi configuration could not be saved",
+          request.connHandle);
+      return;
+    }
+
+    setStatus("wifi_connecting");
+    sendWifiConfigEvent("wifi_config_saved", request.connHandle);
     return;
   }
 
@@ -601,6 +767,7 @@ void initBleDebug()
 
   NimBLEServer *server = NimBLEDevice::createServer();
   server->setCallbacks(new ServerCallbacks());
+  server->advertiseOnDisconnect(false);
   NimBLEService *service = server->createService(BLE_SERVICE_UUID);
 
   commandCharacteristic = service->createCharacteristic(
@@ -643,9 +810,24 @@ void initBleDebug()
 
 void updateBleDebug(WifiScanner &wifiScanner)
 {
-  processCommand(wifiScanner);
-
   const unsigned long now = millis();
+  if (takeAdvertisingRestartRequest() &&
+      now - lastAdvertisingRestartAttempt >= 1000)
+  {
+    lastAdvertisingRestartAttempt = now;
+    const bool started = NimBLEDevice::startAdvertising();
+    Serial.printf(
+        "[BLE] Restart advertising after disconnect: %s\n",
+        started ? "OK" : "FAILED");
+    if (started)
+    {
+      clearAdvertisingRestartRequest();
+    }
+  }
+
+  processCommand(wifiScanner);
+  publishWifiStateIfChanged();
+
   if (now - lastCommandPoll < BLE_COMMAND_POLL_INTERVAL)
   {
     return;

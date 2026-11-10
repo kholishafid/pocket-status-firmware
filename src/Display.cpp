@@ -60,8 +60,8 @@ void drawWeather(const WeatherData &weather)
 
     if (!weather.valid)
     {
-        oled.drawStr(0, 35, "Weather unavailable");
-        oled.drawStr(0, 50, "Check WiFi/API");
+        oled.drawStr(0, 35, "No Wi-Fi / Internet");
+        oled.drawStr(0, 50, "Configure via BLE");
     }
     else
     {

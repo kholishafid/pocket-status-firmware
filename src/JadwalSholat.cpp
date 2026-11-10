@@ -162,8 +162,8 @@ void drawSholatTemplate(
 
   if (!data.valid)
   {
-    oled.drawStr(5, 30, "Waiting sholat data...");
-    oled.drawStr(5, 43, "Check Wi-Fi / API");
+    oled.drawStr(5, 30, "No Wi-Fi / Internet");
+    oled.drawStr(5, 43, "Configure via BLE");
     oled.sendBuffer();
     return;
   }
