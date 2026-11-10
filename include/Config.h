@@ -10,7 +10,7 @@ constexpr int OLED_SCL = 22;
 constexpr double LATITUDE = -7.5755;
 constexpr double LONGITUDE = 110.8243;
 
-constexpr unsigned long WEATHER_INTERVAL = 15UL * 60UL * 1000UL;
+constexpr unsigned long DATA_FETCH_INTERVAL = 30UL * 1000UL;
 constexpr unsigned long DEBOUNCE_MS = 50;
 
 #define SCREEN_WIDTH 128
