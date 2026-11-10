@@ -42,9 +42,11 @@ void setup()
 
   initCatFace(getDisplay());
 
-  connectWifi();
-
+  // BLE dihidupkan duluan supaya aplikasi tetap bisa mengatur Wi-Fi
+  // walaupun koneksi Wi-Fi saat boot gagal.
   initBleDebug();
+
+  connectWifi();
 
   templateController.render();
 }
@@ -62,15 +64,70 @@ void loop()
   }
 
   // --- LOGIKA TANGKAP PERINTAH BLE: GANTI WI-FI ---
-  if (incomingSsid != "") 
+  // Wi-Fi baru dicoba dulu. Kalau gagal (misal password salah), ESP
+  // otomatis kembali ke Wi-Fi sebelumnya. Kredensial baru hanya disimpan
+  // kalau benar-benar tersambung.
+  if (incomingSsid != "")
   {
-    Serial.println("Pindah Wi-Fi ke: " + incomingSsid);
-    WiFi.disconnect(); // Putuskan Wi-Fi lama
-    WiFi.begin(incomingSsid.c_str(), incomingPassword.c_str()); // Mulai koneksi baru
-    
+    const String ssid = incomingSsid;
+    const String pass = incomingPassword;
+
     // Kosongkan variabel agar tidak dieksekusi berulang
     incomingSsid = "";
     incomingPassword = "";
+
+    Serial.println("Mencoba Wi-Fi baru dari aplikasi: " + ssid);
+    if (!requestWifiChange(ssid, pass))
+    {
+      // Percobaan sebelumnya masih berjalan.
+      notifyWifiChange("busy", ssid, "");
+    }
+  }
+
+  // --- PANTAU HASIL PERCOBAAN PINDAH WI-FI ---
+  switch (updateWifiChange())
+  {
+  case WifiChangeResult::SUCCESS:
+    Serial.println("Wi-Fi baru tersambung: " + wifiChangeTargetSsid());
+    notifyWifiChange(
+        "success",
+        wifiChangeTargetSsid(),
+        wifiChangePreviousSsid());
+    break;
+
+  case WifiChangeResult::FAILED_RESTORING:
+    Serial.println("Gagal ke " + wifiChangeTargetSsid() +
+                   ", kembali ke " + wifiChangePreviousSsid());
+    notifyWifiChange(
+        "failed_restoring",
+        wifiChangeTargetSsid(),
+        wifiChangePreviousSsid());
+    break;
+
+  case WifiChangeResult::FAILED_NO_PREVIOUS:
+    Serial.println("Gagal ke " + wifiChangeTargetSsid() +
+                   ", tidak ada Wi-Fi sebelumnya");
+    notifyWifiChange("failed_no_previous", wifiChangeTargetSsid(), "");
+    break;
+
+  case WifiChangeResult::RESTORED:
+    Serial.println("Kembali tersambung ke " + wifiChangePreviousSsid());
+    notifyWifiChange(
+        "restored",
+        wifiChangePreviousSsid(),
+        wifiChangePreviousSsid());
+    break;
+
+  case WifiChangeResult::RESTORE_FAILED:
+    Serial.println("Gagal kembali ke " + wifiChangePreviousSsid());
+    notifyWifiChange(
+        "restore_failed",
+        wifiChangePreviousSsid(),
+        wifiChangePreviousSsid());
+    break;
+
+  default:
+    break;
   }
 
   // --- RENDER LAYAR ---

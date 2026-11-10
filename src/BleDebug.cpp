@@ -221,15 +221,16 @@ void processCommand(WifiScanner &wifiScanner)
 
   if (command == PendingCommand::NONE) return;
 
-  // -- LOGIKA BARU: SET WIF --
+  // -- SET WIFI --
+  // Koneksi aktualnya dikerjakan main.cpp lewat requestWifiChange()
+  // (dengan rollback ke Wi-Fi lama kalau gagal).
   if (command == PendingCommand::SET_WIFI) {
-    // Beri tahu aplikasi Flutter bahwa ESP32 sedang mencoba konek
+    // Beri tahu aplikasi Flutter bahwa ESP32 menerima perintah ganti Wi-Fi
     JsonDocument document;
     document["event"] = "wifi_connecting";
     document["ssid"] = incomingSsid;
     sendEvent(document);
     
-    // NOTE: Logika koneksi aktual akan kita hubungkan ke WifiConnection.cpp nanti
     Serial.println("Menerima Wi-Fi Baru dari Flutter: " + incomingSsid);
     return;
   }
@@ -261,14 +262,18 @@ void processCommand(WifiScanner &wifiScanner)
     return;
   }
 
-  // -- LOGIKA LAMA (GET STATUS & SCAN) --
+  // -- GET STATUS & SCAN --
   if (command == PendingCommand::GET_STATUS)
   {
+    const bool connected = WiFi.status() == WL_CONNECTED;
+
     setStatus(scanSessionActive ? "scanning" : "idle");
     JsonDocument document;
     document["event"] = "status";
     document["state"] = scanSessionActive ? "scanning" : "idle";
-    document["wifi_connected"] = WiFi.status() == WL_CONNECTED;
+    document["wifi_connected"] = connected;
+    document["ssid"] = connected ? WiFi.SSID() : String("");
+    document["ip"] = connected ? WiFi.localIP().toString() : String("");
     document["scan_id"] = scanId;
     sendEvent(document);
     return;
@@ -306,10 +311,26 @@ void processCommand(WifiScanner &wifiScanner)
 }
 }
 
+void notifyWifiChange(
+    const char *state,
+    const String &ssid,
+    const String &previousSsid)
+{
+  JsonDocument document;
+  document["event"] = "wifi_change";
+  document["state"] = state;
+  document["ssid"] = ssid;
+  document["previous_ssid"] = previousSsid;
+  sendEvent(document);
+}
+
 void initBleDebug()
 {
   esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
   NimBLEDevice::init(BLE_DEVICE_NAME);
+
+  // MTU besar supaya notifikasi JSON tidak ditolak (mtu_too_small).
+  NimBLEDevice::setMTU(517);
 
   NimBLEServer *server = NimBLEDevice::createServer();
   NimBLEService *service = server->createService(BLE_SERVICE_UUID);
