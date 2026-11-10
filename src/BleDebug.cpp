@@ -1,4 +1,5 @@
 #include "BleDebug.h"
+#include "Config.h"
 
 #include <ArduinoJson.h>
 #include <NimBLEDevice.h>
@@ -6,6 +7,10 @@
 #include <NimBLEUtils.h>
 #include <WiFi.h>
 #include <esp_bt.h>
+
+String incomingSsid = "";
+String incomingPassword = "";
+String incomingTemplate = "";
 
 namespace
 {
@@ -21,8 +26,16 @@ enum class PendingCommand
   NONE,
   SCAN_WIFI,
   GET_STATUS,
+  SET_WIFI,
+  SET_TEMPLATE,
+  SET_LOCATION,
   UNKNOWN
 };
+
+// Variabel penampung data sementara dari Flutter
+double currentLat = DEFAULT_LATITUDE;
+double currentLon = DEFAULT_LONGITUDE;
+String currentAdm4 = DEFAULT_ADM4;
 
 NimBLECharacteristic *commandCharacteristic = nullptr;
 NimBLECharacteristic *dataCharacteristic = nullptr;
@@ -122,20 +135,41 @@ public:
       NimBLECharacteristic *characteristic,
       NimBLEConnInfo &) override
   {
-    String command = characteristic->getValue().c_str();
-    command.trim();
+    String payload = characteristic->getValue().c_str();
+    payload.trim();
 
-    if (command == "SCAN_WIFI")
-    {
-      pendingCommand = PendingCommand::SCAN_WIFI;
-    }
-    else if (command == "GET_STATUS")
-    {
-      pendingCommand = PendingCommand::GET_STATUS;
-    }
-    else
-    {
-      pendingCommand = PendingCommand::UNKNOWN;
+    // Coba parsing payload sebagai JSON dari Flutter
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, payload);
+
+    if (!error) {
+      String action = doc["action"].as<String>();
+      
+      if (action == "set_wifi") {
+        incomingSsid = doc["ssid"].as<String>();
+        incomingPassword = doc["pass"].as<String>();
+        pendingCommand = PendingCommand::SET_WIFI;
+      } 
+      else if (action == "set_template") {
+        incomingTemplate = doc["id"].as<String>();
+        pendingCommand = PendingCommand::SET_TEMPLATE;
+      }
+      else if (action == "set_location") {
+        // Menangkap data koordinat dan adm4 dari Flutter
+        currentLat = doc["lat"].as<double>();
+        currentLon = doc["lon"].as<double>();
+        currentAdm4 = doc["adm4"].as<String>();
+        pendingCommand = PendingCommand::SET_LOCATION;
+      }
+      else if (action == "scan_wifi") pendingCommand = PendingCommand::SCAN_WIFI;
+      else if (action == "get_status") pendingCommand = PendingCommand::GET_STATUS;
+      else pendingCommand = PendingCommand::UNKNOWN;
+    } 
+    else {
+      // Fallback: Kalau Flutter ngirim teks biasa (bukan JSON)
+      if (payload == "SCAN_WIFI") pendingCommand = PendingCommand::SCAN_WIFI;
+      else if (payload == "GET_STATUS") pendingCommand = PendingCommand::GET_STATUS;
+      else pendingCommand = PendingCommand::UNKNOWN;
     }
   }
 };
@@ -185,15 +219,52 @@ void processCommand(WifiScanner &wifiScanner)
   PendingCommand command = pendingCommand;
   pendingCommand = PendingCommand::NONE;
 
-  if (command == PendingCommand::NONE)
-  {
+  if (command == PendingCommand::NONE) return;
+
+  // -- LOGIKA BARU: SET WIF --
+  if (command == PendingCommand::SET_WIFI) {
+    // Beri tahu aplikasi Flutter bahwa ESP32 sedang mencoba konek
+    JsonDocument document;
+    document["event"] = "wifi_connecting";
+    document["ssid"] = incomingSsid;
+    sendEvent(document);
+    
+    // NOTE: Logika koneksi aktual akan kita hubungkan ke WifiConnection.cpp nanti
+    Serial.println("Menerima Wi-Fi Baru dari Flutter: " + incomingSsid);
     return;
   }
 
+  // -- LOGIKA BARU: SET TEMPLATE --
+  if (command == PendingCommand::SET_TEMPLATE) {
+    JsonDocument document;
+    document["event"] = "template_changed";
+    document["template_id"] = incomingTemplate;
+    sendEvent(document);
+    
+    // NOTE: Logika render layar akan kita hubungkan ke TemplateController.cpp nanti
+    Serial.println("Ganti Template ke: " + incomingTemplate);
+    return;
+  }
+
+  if (command == PendingCommand::SET_LOCATION) {
+    // Kirim balasan ke Flutter bahwa lokasi berhasil diubah
+    JsonDocument document;
+    document["event"] = "location_updated";
+    document["lat"] = currentLat;
+    document["lon"] = currentLon;
+    document["adm4"] = currentAdm4;
+    sendEvent(document);
+    
+    Serial.println("Lokasi diupdate otomatis dari Aplikasi! ADM4: " + currentAdm4);
+    
+    // NOTE: Nanti variabel currentAdm4 ini yang akan dilempar ke fungsi HTTP GET Weather
+    return;
+  }
+
+  // -- LOGIKA LAMA (GET STATUS & SCAN) --
   if (command == PendingCommand::GET_STATUS)
   {
     setStatus(scanSessionActive ? "scanning" : "idle");
-
     JsonDocument document;
     document["event"] = "status";
     document["state"] = scanSessionActive ? "scanning" : "idle";
@@ -205,7 +276,7 @@ void processCommand(WifiScanner &wifiScanner)
 
   if (command == PendingCommand::UNKNOWN)
   {
-    sendError("unknown_command", "Use SCAN_WIFI or GET_STATUS");
+    sendError("unknown_command", "Kirim format JSON yang valid!");
     return;
   }
 

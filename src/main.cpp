@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <WiFi.h>
 
 #include "BleDebug.h"
 #include "Config.h"
@@ -9,6 +10,11 @@
 #include "JadwalSholat.h"
 #include "TemplateController.h"
 #include "WifiConnection.h"
+
+// Tarik semua variabel penampung dari BleDebug.cpp
+extern String incomingTemplate;
+extern String incomingSsid;
+extern String incomingPassword;
 
 static WeatherData weather;
 static unsigned long lastDisplayUpdate = 0;
@@ -48,6 +54,26 @@ void loop()
   templateController.handleButton();
   templateController.updateData();
 
+  // --- LOGIKA TANGKAP PERINTAH BLE: GANTI TEMPLATE ---
+  if (incomingTemplate != "") 
+  {
+    templateController.setTemplateByName(incomingTemplate);
+    incomingTemplate = ""; // Kosongkan lagi string-nya
+  }
+
+  // --- LOGIKA TANGKAP PERINTAH BLE: GANTI WI-FI ---
+  if (incomingSsid != "") 
+  {
+    Serial.println("Pindah Wi-Fi ke: " + incomingSsid);
+    WiFi.disconnect(); // Putuskan Wi-Fi lama
+    WiFi.begin(incomingSsid.c_str(), incomingPassword.c_str()); // Mulai koneksi baru
+    
+    // Kosongkan variabel agar tidak dieksekusi berulang
+    incomingSsid = "";
+    incomingPassword = "";
+  }
+
+  // --- RENDER LAYAR ---
   if (templateController.current() == Template::IDLE_FACE)
   {
     updateCatFace();
