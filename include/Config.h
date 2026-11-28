@@ -26,3 +26,6 @@ constexpr float FACE_ROUNDNESS = 0.45f;
 constexpr unsigned long FACE_FRAME_MS = 33;
 constexpr float FACE_EYE_CY = 26.0f;
 constexpr float FACE_MOUTH_CY = 55.0f;
+
+constexpr uint8_t ENV_SENSOR_ADDR = 0x76;   // sesuai hasil scan lu
+constexpr float STATION_ALTITUDE_M = 0.0f;  // ketinggian lokasi lu (mdpl)

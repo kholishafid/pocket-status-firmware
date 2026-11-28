@@ -4,6 +4,7 @@
 #include "BleDebug.h"
 #include "Config.h"
 #include "Display.h"
+#include "Environment.h"
 #include "Weather.h"
 #include "CatFace.h"
 #include "Finance.h"
@@ -38,6 +39,7 @@ void setup()
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
   initDisplay();
+  initEnvironment(); // Wire sudah aktif dari initDisplay()
   drawMessage("Connecting WiFi...");
 
   initCatFace(getDisplay());
@@ -129,6 +131,9 @@ void loop()
   default:
     break;
   }
+
+  // --- BACA SENSOR (non-blocking, tetap jalan walau template lain aktif) ---
+  updateEnvironment();
 
   // --- RENDER LAYAR ---
   if (templateController.current() == Template::IDLE_FACE)

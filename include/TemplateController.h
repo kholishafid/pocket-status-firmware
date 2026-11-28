@@ -11,6 +11,7 @@ enum class Template
   IDLE_FACE,
   CLOCK,
   WEATHER,
+  ENVIRONMENT,
   FINANCE,
   JADWAL_SHOLAT
 };

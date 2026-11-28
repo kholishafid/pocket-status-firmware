@@ -3,6 +3,7 @@
 
 #include "Config.h"
 #include "Display.h"
+#include "Environment.h"
 #include "TemplateController.h"
 
 TemplateController::TemplateController(
@@ -39,6 +40,9 @@ void TemplateController::handleButton()
         currentTemplate_ = Template::WEATHER;
         break;
       case Template::WEATHER:
+        currentTemplate_ = Template::ENVIRONMENT;
+        break;
+      case Template::ENVIRONMENT:
         currentTemplate_ = Template::FINANCE;
         break;
       case Template::FINANCE:
@@ -107,6 +111,7 @@ void TemplateController::updateData()
 
   case Template::IDLE_FACE:
   case Template::CLOCK:
+  case Template::ENVIRONMENT: // data sensor dibaca di loop() lewat updateEnvironment()
     break;
   }
 }
@@ -138,6 +143,9 @@ void TemplateController::render()
   case Template::WEATHER:
     drawWeather(weather_);
     break;
+  case Template::ENVIRONMENT:
+    drawEnvTemplate(getDisplay(), getEnvData());
+    break;
   case Template::FINANCE:
     drawFinanceTemplate(getDisplay(), finance_, financePage_);
     break;
@@ -147,18 +155,19 @@ void TemplateController::render()
   }
 }
 
-// Pastikan fungsi bawaan ini MASIH ADA:
 Template TemplateController::current() const
 {
   return currentTemplate_;
 }
 
-// Dan fungsi baru lu ada di bawahnya:
 void TemplateController::setTemplateByName(const String& templateName)
 {
   if (templateName == "weather") {
     currentTemplate_ = Template::WEATHER;
   } 
+  else if (templateName == "environment" || templateName == "sensor") {
+    currentTemplate_ = Template::ENVIRONMENT;
+  }
   else if (templateName == "finance") {
     currentTemplate_ = Template::FINANCE;
   } 
